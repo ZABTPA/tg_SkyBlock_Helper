@@ -1,8 +1,11 @@
+import logging
+logger = logging.getLogger(__name__)
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from api.mojang import get_uuid
 from api.hypixel import get_profiles
 import datetime
+
 
 CATACOMBS_XP_TABLE = [
     50, 75, 110, 160, 230, 330, 470, 670, 950, 1340,
@@ -210,34 +213,39 @@ async def dungeons_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    parts = query.data.split("|")
-    action = parts[0]
-    username = parts[1]
-    cute_name = parts[2]
+    try:
+        parts = query.data.split("|")
+        action = parts[0]
+        username = parts[1]
+        cute_name = parts[2]
 
-    uuid, member, cute_name = await fetch_member(username, cute_name)
-    if not member:
-        await query.edit_message_text("❌ Не удалось получить данные.")
-        return
+        uuid, member, cute_name = await fetch_member(username, cute_name)
+        if not member:
+            await query.edit_message_text("❌ Не удалось получить данные.")
+            return
 
-    dungeons = member.get("dungeons", {})
-    dungeon_types = dungeons.get("dungeon_types", {})
-    catacombs = dungeon_types.get("catacombs", {})
-    master_catacombs = dungeon_types.get("master_catacombs", {})
-    player_classes = dungeons.get("player_classes", {})
-    cata_xp = catacombs.get("experience", 0)
-    cata_level, cata_progress = cata_xp_to_level(cata_xp)
-    secrets = member.get("player_stats", {}).get("dungeons", {}).get("secrets_found", 0)
+        dungeons = member.get("dungeons", {})
+        dungeon_types = dungeons.get("dungeon_types", {})
+        catacombs = dungeon_types.get("catacombs", {})
+        master_catacombs = dungeon_types.get("master_catacombs", {})
+        player_classes = dungeons.get("player_classes", {})
+        cata_xp = catacombs.get("experience", 0)
+        cata_level, cata_progress = cata_xp_to_level(cata_xp)
+        secrets = member.get("player_stats", {}).get("dungeons", {}).get("secrets_found", 0)
 
-    keyboard = build_keyboard(username, cute_name)
+        keyboard = build_keyboard(username, cute_name)
 
-    if action == "dg_main":
-        text = build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, secrets, player_classes)
-    elif action == "dg_runs":
-        text = build_runs_text(username, cute_name, catacombs, master_catacombs)
-    elif action == "dg_daily":
-        text = build_daily_text(username, cute_name, catacombs, master_catacombs)
-    else:
-        return
+        if action == "dg_main":
+            text = build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, secrets, player_classes)
+        elif action == "dg_runs":
+            text = build_runs_text(username, cute_name, catacombs, master_catacombs)
+        elif action == "dg_daily":
+            text = build_daily_text(username, cute_name, catacombs, master_catacombs)
+        else:
+            return
 
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
+
+    except Exception as e:
+        logger.error(f"Ошибка в dungeons_callback: {e}", exc_info=True)
+        await query.edit_message_text(f"❌ Ошибка: {e}")
