@@ -98,7 +98,7 @@ def build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, pla
         lines.append(f"🏰 Catacombs: *{cata_level:.2f}* _(до след: {int(200_000_000 - cata_progress):,} XP)_\n")
     else:
         lines.append(f"🏰 Catacombs: *{cata_level:.2f}* _(XP: {int(cata_xp):,})_\n")
-    lines.append(f"🏃 Всего ранов: *{total_runs:,}*\n")
+    lines.append(f"🏃 Всего ранов: *{int(total_runs):,}*\n")
     lines.append("👤 Классы:")
     for key, label in class_names.items():
         xp = player_classes.get(key, {}).get("experience", 0)
