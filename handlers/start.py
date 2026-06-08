@@ -6,6 +6,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Привет! Я *SkyBlock Helper Bot*\n\n"
         "📌 Команды:\n"
         "/skills `<ник>` — уровни скиллов\n"
+        "/cacalc `<ник> <уровень>` — class average калькулятор\n"
+        "/classcalc `<ник> <класс> <уровень>` — калькулятор одного класса\n"
         "/dungeons `<ник>` — уровень catacombs\n\n"
         "Пример: `/skills ZABTPA`",
         parse_mode="Markdown"
