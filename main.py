@@ -25,7 +25,7 @@ def main():
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(CommandHandler("skills", skills_handler))
     app.add_handler(CommandHandler("dungeons", dungeons_handler))
-    app.add_handler(CallbackQueryHandler(dungeons_callback, pattern="^dungeons_"))
+    app.add_handler(CallbackQueryHandler(dungeons_callback, pattern="^dg_"))
 
     app.post_init = set_commands
 
