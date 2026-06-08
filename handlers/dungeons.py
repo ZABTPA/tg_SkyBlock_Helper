@@ -1,7 +1,8 @@
-from telegram import Update
-from telegram.ext import ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, CallbackQueryHandler
 from api.mojang import get_uuid
 from api.hypixel import get_profiles
+import datetime
 
 CATACOMBS_XP_TABLE = [
     50, 75, 110, 160, 230, 330, 470, 670, 950, 1340,
@@ -57,6 +58,97 @@ def class_xp_to_level(xp: float) -> tuple:
     decimal = remaining / next_xp
     return level + decimal, remaining
 
+def get_total_runs(catacombs: dict, master: bool = False) -> int:
+    tier_completions = catacombs.get("tier_completions", {})
+    return sum(tier_completions.values())
+
+def get_daily_runs(catacombs: dict, master: bool = False) -> dict:
+    # Время сброса — 4:00 утра по Екатеринбургу (UTC+5)
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5)))
+    reset_time = now.replace(hour=4, minute=0, second=0, microsecond=0)
+    if now < reset_time:
+        reset_time -= datetime.timedelta(days=1)
+    reset_timestamp = int(reset_time.timestamp() * 1000)
+
+    floor_key = "master_catacombs_completions" if master else "catacombs_completions"
+    completions = catacombs.get(floor_key, {})
+
+    daily = {}
+    for floor, runs in completions.items():
+        daily_count = sum(1 for t in runs if t >= reset_timestamp)
+        if daily_count > 0:
+            daily[floor] = daily_count
+    return daily
+
+def build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, secrets, player_classes, class_names):
+    lines = [f"⚔️ Катакомбы *{username}* `[{cute_name}]`:\n"]
+
+    if cata_level >= 50:
+        lines.append(f"🏰 Catacombs: *{cata_level:.2f}* _(до след: {int(200_000_000 - cata_progress):,} XP)_\n")
+    else:
+        lines.append(f"🏰 Catacombs: *{cata_level:.2f}* _(XP: {int(cata_xp):,})_\n")
+
+    lines.append(f"🔑 Секретки: *{int(secrets):,}*\n")
+    lines.append("👤 Классы:")
+
+    for key, label in class_names.items():
+        class_data = player_classes.get(key, {})
+        xp = class_data.get("experience", 0)
+        level, progress = class_xp_to_level(xp)
+        if level >= 50:
+            lines.append(f"{label}: *{level:.2f}* _(до след: {int(200_000_000 - progress):,} XP)_")
+        else:
+            lines.append(f"{label}: *{level:.2f}* _(XP: {int(xp):,})_")
+
+    return "\n".join(lines)
+
+def build_runs_text(username, cute_name, catacombs, master_catacombs):
+    lines = [f"🏃 Раны *{username}* `[{cute_name}]`:\n"]
+
+    # Обычный режим
+    normal_total = get_total_runs(catacombs)
+    lines.append(f"⚔️ Обычный режим: *{normal_total:,}* ранов")
+    tier_completions = catacombs.get("tier_completions", {})
+    for floor, count in sorted(tier_completions.items()):
+        floor_name = "Entrance" if floor == "0" else f"F{floor}"
+        lines.append(f"  {floor_name}: *{count:,}*")
+
+    lines.append("")
+
+    # Мастер мод
+    master_total = get_total_runs(master_catacombs)
+    lines.append(f"💀 Мастер мод: *{master_total:,}* ранов")
+    master_completions = master_catacombs.get("tier_completions", {})
+    for floor, count in sorted(master_completions.items()):
+        lines.append(f"  M{floor}: *{count:,}*")
+
+    return "\n".join(lines)
+
+def build_daily_text(username, cute_name, catacombs, master_catacombs):
+    lines = [f"📅 Дейли раны *{username}* `[{cute_name}]` _(сброс в 4:00 по Екб)_:\n"]
+
+    daily_normal = get_daily_runs(catacombs)
+    daily_master = get_daily_runs(master_catacombs, master=True)
+
+    if daily_normal:
+        lines.append("⚔️ Обычный режим:")
+        for floor, count in sorted(daily_normal.items()):
+            floor_name = "Entrance" if floor == "0" else f"F{floor}"
+            lines.append(f"  {floor_name}: *{count}*")
+    else:
+        lines.append("⚔️ Обычный режим: *0* ранов сегодня")
+
+    lines.append("")
+
+    if daily_master:
+        lines.append("💀 Мастер мод:")
+        for floor, count in sorted(daily_master.items()):
+            lines.append(f"  M{floor}: *{count}*")
+    else:
+        lines.append("💀 Мастер мод: *0* ранов сегодня")
+
+    return "\n".join(lines)
+
 async def dungeons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❗ Укажи ник!\nПример: `/dungeons Technoblade`\nС профилем: `/dungeons Technoblade Mango`", parse_mode="Markdown")
@@ -106,38 +198,75 @@ async def dungeons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dungeons = member.get("dungeons", {})
     dungeon_types = dungeons.get("dungeon_types", {})
     catacombs = dungeon_types.get("catacombs", {})
+    master_catacombs = dungeon_types.get("master_catacombs", {})
     player_classes = dungeons.get("player_classes", {})
 
     cata_xp = catacombs.get("experience", 0)
     cata_level, cata_progress = cata_xp_to_level(cata_xp)
-
     secrets = member.get("player_stats", {}).get("dungeons", {}).get("secrets_found", 0)
 
     class_names = {
-        "healer":  "💚 Healer",
+        "healer":  "🌸 Healer",
         "mage":    "🔵 Mage",
         "berserk": "🔴 Berserk",
         "archer":  "🟡 Archer",
-        "tank":    "🟤 Tank",
+        "tank":    "🟢 Tank",
     }
 
-    lines = [f"⚔️ Катакомбы *{username}* `[{cute_name}]`:\n"]
+    # Сохраняем данные в context для кнопок
+    context.user_data["dungeons"] = {
+        "username": username,
+        "cute_name": cute_name,
+        "cata_level": cata_level,
+        "cata_progress": cata_progress,
+        "cata_xp": cata_xp,
+        "secrets": secrets,
+        "player_classes": player_classes,
+        "class_names": class_names,
+        "catacombs": catacombs,
+        "master_catacombs": master_catacombs,
+    }
 
-    if cata_level >= 50:
-        lines.append(f"🏰 Catacombs: *{cata_level:.2f}* _(до след: {int(200_000_000 - cata_progress):,} XP)_\n")
+    text = build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, secrets, player_classes, class_names)
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🏃 Runs", callback_data="dungeons_runs"),
+            InlineKeyboardButton("📅 Daily", callback_data="dungeons_daily"),
+            InlineKeyboardButton("🏰 Главная", callback_data="dungeons_main"),
+        ]
+    ])
+
+    await msg.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
+
+async def dungeons_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    data = context.user_data.get("dungeons")
+    if not data:
+        await query.edit_message_text("❌ Данные устарели. Запроси заново через /dungeons.")
+        return
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🏃 Runs", callback_data="dungeons_runs"),
+            InlineKeyboardButton("📅 Daily", callback_data="dungeons_daily"),
+            InlineKeyboardButton("🏰 Главная", callback_data="dungeons_main"),
+        ]
+    ])
+
+    if query.data == "dungeons_main":
+        text = build_main_text(
+            data["username"], data["cute_name"], data["cata_level"],
+            data["cata_progress"], data["cata_xp"], data["secrets"],
+            data["player_classes"], data["class_names"]
+        )
+    elif query.data == "dungeons_runs":
+        text = build_runs_text(data["username"], data["cute_name"], data["catacombs"], data["master_catacombs"])
+    elif query.data == "dungeons_daily":
+        text = build_daily_text(data["username"], data["cute_name"], data["catacombs"], data["master_catacombs"])
     else:
-        lines.append(f"🏰 Catacombs: *{cata_level:.2f}* _(XP: {int(cata_xp):,})_\n")
+        return
 
-    lines.append(f"🔑 Секретки: *{int(secrets):,}*\n")
-    lines.append("👤 Классы:")
-
-    for key, label in class_names.items():
-        class_data = player_classes.get(key, {})
-        xp = class_data.get("experience", 0)
-        level, progress = class_xp_to_level(xp)
-        if level >= 50:
-            lines.append(f"{label}: *{level:.2f}* _(до след: {int(200_000_000 - progress):,} XP)_")
-        else:
-            lines.append(f"{label}: *{level:.2f}* _(XP: {int(xp):,})_")
-
-    await msg.edit_text("\n".join(lines), parse_mode="Markdown")
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
