@@ -2,6 +2,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from api.mojang import get_uuid
 from api.hypixel import get_profiles
+import math
 
 SKILL_XP_TABLE = [
     50, 75, 110, 160, 230, 330, 470, 670, 950, 1340,
@@ -11,10 +12,11 @@ SKILL_XP_TABLE = [
     15000000, 19000000, 24000000, 30000000, 38000000, 48000000, 60000000, 75000000, 93000000, 116250000
 ]
 
-MAIN_CLASS_XP = 420_000   # XP за M7 для основного класса
-PASSIVE_CLASS_XP = 105_000  # XP за M7 для остальных классов
+MAIN_CLASS_XP = 420_000
+PASSIVE_CLASS_XP = 105_000
+TOTAL_XP_TO_50 = sum(SKILL_XP_TABLE)
 
-def xp_to_level_and_remaining(xp: float) -> tuple:
+def xp_to_level(xp: float) -> float:
     level = 0
     remaining = xp
     for needed in SKILL_XP_TABLE:
@@ -24,20 +26,65 @@ def xp_to_level_and_remaining(xp: float) -> tuple:
         else:
             break
     if level >= 50:
-        overflow = xp - sum(SKILL_XP_TABLE)
-        total_level = 50 + overflow / 200_000_000
-        remaining_to_next = 200_000_000 - (overflow % 200_000_000)
-        return total_level, remaining_to_next
+        overflow = xp - TOTAL_XP_TO_50
+        return 50 + overflow / 200_000_000
     next_xp = SKILL_XP_TABLE[level] if level < len(SKILL_XP_TABLE) else 200_000_000
-    return level + remaining / next_xp, next_xp - remaining
+    return level + remaining / next_xp
 
-def runs_needed(xp_needed: float, xp_per_run: float) -> int:
-    return max(0, int((xp_needed + xp_per_run - 1) // xp_per_run))
+def xp_needed_for_target(current_xp: float, target: float) -> float:
+    if target <= 50:
+        target_xp = TOTAL_XP_TO_50
+    else:
+        target_xp = TOTAL_XP_TO_50 + (target - 50) * 200_000_000
+    return max(0, target_xp - current_xp)
+
+def simulate_runs(class_xp: dict, target: float) -> dict:
+    """
+    Симулируем раны — каждый ран качаем самый отстающий класс как основной.
+    Остальные получают пассивно 105k.
+    """
+    if target <= 50:
+        target_xp = TOTAL_XP_TO_50
+    else:
+        target_xp = TOTAL_XP_TO_50 + (target - 50) * 200_000_000
+
+    xp = dict(class_xp)
+    runs_per_class = {k: 0 for k in xp}
+    total_runs = 0
+
+    while any(v < target_xp for v in xp.values()):
+        # Находим самый отстающий класс
+        main = min(xp, key=lambda k: xp[k])
+        if xp[main] >= target_xp:
+            break
+
+        # Считаем сколько ранов нужно этому классу как основному
+        # пока он не догонит второй по отставанию или не достигнет цели
+        others = [k for k in xp if k != main]
+        second_worst_xp = min(xp[k] for k in others) if others else target_xp
+        needed_to_catch = min(target_xp - xp[main], second_worst_xp - xp[main])
+
+        if needed_to_catch <= 0:
+            needed_to_catch = target_xp - xp[main]
+
+        runs = max(1, math.ceil(needed_to_catch / MAIN_CLASS_XP))
+
+        # Применяем раны
+        xp[main] += runs * MAIN_CLASS_XP
+        xp[main] = min(xp[main], target_xp + MAIN_CLASS_XP)
+        runs_per_class[main] += runs
+        total_runs += runs
+
+        for k in others:
+            xp[k] += runs * PASSIVE_CLASS_XP
+            xp[k] = min(xp[k], target_xp + PASSIVE_CLASS_XP)
+
+    return runs_per_class, total_runs
 
 async def cacalc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
-            "❗ Укажи ник и цель!\n"
+            "❗ Укажи ник!\n"
             "Пример: `/cacalc Technoblade` — до CA50\n"
             "Или: `/cacalc Technoblade 55` — до CA55",
             parse_mode="Markdown"
@@ -75,7 +122,8 @@ async def cacalc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dungeons = member.get("dungeons", {})
     player_classes = dungeons.get("player_classes", {})
 
-    class_names = {
+    class_keys = ["healer", "mage", "berserk", "archer", "tank"]
+    class_labels = {
         "healer":  "🌸 Healer",
         "mage":    "🔵 Mage",
         "berserk": "🔴 Berserk",
@@ -83,37 +131,17 @@ async def cacalc_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "tank":    "🟢 Tank",
     }
 
-    # Считаем XP нужный до цели для каждого класса
-    target_xp = sum(SKILL_XP_TABLE[:50]) + max(0, (target_ca - 50)) * 200_000_000
+    class_xp = {k: player_classes.get(k, {}).get("experience", 0) for k in class_keys}
+    runs_per_class, total_runs = simulate_runs(class_xp, target_ca)
 
-    lines = [f"🧮 Калькулятор CA *{username}* `[{cute_name}]`\n📊 Цель: *CA {target_ca:.0f}*\n"]
+    lines = [f"🧮 *{username}* `[{cute_name}]` → CA *{target_ca:.0f}*\n"]
 
-    total_runs_main = []
-    total_runs_passive = []
+    for key in class_keys:
+        level = xp_to_level(class_xp[key])
+        runs = runs_per_class[key]
+        label = class_labels[key]
+        lines.append(f"{label}: *{level:.2f}* → *{runs:,}* ранов")
 
-    for key, label in class_names.items():
-        xp = player_classes.get(key, {}).get("experience", 0)
-        level, remaining = xp_to_level_and_remaining(xp)
-
-        # XP нужно до цели
-        if xp >= target_xp:
-            xp_needed = 0
-        else:
-            xp_needed = target_xp - xp
-
-        runs_main = runs_needed(xp_needed, MAIN_CLASS_XP)
-        runs_passive = runs_needed(xp_needed, PASSIVE_CLASS_XP)
-
-        total_runs_main.append(runs_main)
-        total_runs_passive.append(runs_passive)
-
-        lines.append(f"{label}: *{level:.2f}* → нужно *{runs_main:,}* ранов M7 _(как основной)_")
-
-    # CA = среднее всех классов
-    # Для CA50 нужно чтобы каждый класс был 50
-    # Максимальное кол-во ранов = сколько нужно самому слабому классу как основному
-    max_runs = max(total_runs_main)
-    lines.append(f"\n⭐ До CA *{target_ca:.0f}*: ~*{max_runs:,}* ранов M7")
-    lines.append(f"💡 Это если качать самый отстающий класс основным каждый ран")
+    lines.append(f"\n⭐ Всего M7 ранов: *{total_runs:,}*")
 
     await msg.edit_text("\n".join(lines), parse_mode="Markdown")
