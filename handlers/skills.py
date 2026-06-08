@@ -1,7 +1,44 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 from api.mojang import get_uuid
-from api.hypixel import get_profiles, get_best_profile, parse_skills, xp_to_level
+from api.hypixel import get_profiles
+
+SKILL_XP_TABLE = [
+    50, 125, 200, 300, 500, 750, 1000, 1500, 2000, 3500,
+    5000, 7500, 10000, 15000, 20000, 30000, 50000, 75000, 100000, 200000,
+    300000, 400000, 500000, 600000, 700000, 800000, 900000, 1000000, 1100000, 1200000,
+    1300000, 1400000, 1500000, 1600000, 1700000, 1800000, 1900000, 2000000, 2100000, 2200000,
+    2300000, 2400000, 2500000, 2600000, 2750000, 2900000, 3100000, 3400000, 3700000, 4000000,
+    4300000, 4600000, 4900000, 5200000, 5500000, 5800000, 6100000, 6400000, 6700000, 7000000
+]
+
+def xp_to_level(xp: float) -> int:
+    level = 0
+    for needed in SKILL_XP_TABLE:
+        if xp >= needed:
+            xp -= needed
+            level += 1
+        else:
+            break
+    return level
+
+def parse_skills(member: dict) -> dict:
+    skill_names = {
+        "SKILL_COMBAT":     "⚔️ Combat",
+        "SKILL_MINING":     "⛏️ Mining",
+        "SKILL_FARMING":    "🌾 Farming",
+        "SKILL_FISHING":    "🎣 Fishing",
+        "SKILL_FORAGING":   "🪓 Foraging",
+        "SKILL_ENCHANTING": "🏹 Enchanting",
+        "SKILL_ALCHEMY":    "🧪 Alchemy",
+        "SKILL_TAMING":     "❤️ Taming",
+    }
+    experience = member.get("player_data", {}).get("experience", {})
+    result = {}
+    for key, label in skill_names.items():
+        xp = experience.get(key, 0)
+        result[label] = {"xp": xp, "level": xp_to_level(xp)}
+    return result
 
 async def skills_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -28,7 +65,6 @@ async def skills_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text("❌ SkyBlock профили не найдены.")
         return
 
-    # Если указан конкретный профиль — ищем его
     if profile_name:
         profile = next(
             (p for p in profiles if p.get("cute_name", "").lower() == profile_name),
@@ -39,7 +75,6 @@ async def skills_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.edit_text(f"❌ Профиль *{profile_name}* не найден.\nДоступные профили: `{names}`", parse_mode="Markdown")
             return
     else:
-        # Берём профиль помеченный как selected или последний активный
         profile = next((p for p in profiles if p.get("selected")), None)
         if not profile:
             profile = profiles[0]
@@ -64,7 +99,6 @@ async def skills_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if all(v["xp"] == 0 for v in skills.values()):
         lines.append("\n⚠️ XP везде 0 — игрок отключил Skills API в настройках профиля.")
 
-    # Показываем все профили
     all_profiles = ", ".join(p.get("cute_name", "?") for p in profiles)
     lines.append(f"\n📋 Все профили: `{all_profiles}`")
     lines.append(f"💡 Другой профиль: `/skills {username} <название>`")
