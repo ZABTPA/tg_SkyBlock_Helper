@@ -1,3 +1,9 @@
+import logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
 from telegram import BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 
