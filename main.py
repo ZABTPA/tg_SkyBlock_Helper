@@ -7,6 +7,7 @@ logging.basicConfig(
 from telegram import BotCommand
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler
 
+from handlers.classcalc import classcalc_handler
 from handlers.cacalc import cacalc_handler
 from config import TG_TOKEN
 from handlers.start import start_handler
@@ -19,11 +20,13 @@ async def set_commands(app):
         BotCommand("skills",  "⚔️ Скиллы игрока"),
         BotCommand("dungeons","🏰 Катакомбы и классы"),
         BotCommand("cacalc", "🧮 Калькулятор Class Average"),
+        BotCommand("classcalc", "📊 Калькулятор класса"),
     ])
 
 def main():
     app = ApplicationBuilder().token(TG_TOKEN).build()
 
+    app.add_handler(CommandHandler("classcalc", classcalc_handler))
     app.add_handler(CommandHandler("cacalc", cacalc_handler))
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(CommandHandler("skills", skills_handler))
