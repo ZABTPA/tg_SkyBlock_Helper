@@ -6,7 +6,6 @@ from api.mojang import get_uuid
 from api.hypixel import get_profiles
 import datetime
 
-
 CATACOMBS_XP_TABLE = [
     50, 75, 110, 160, 230, 330, 470, 670, 950, 1340,
     1890, 2665, 3760, 5260, 7380, 10300, 14400, 20000, 27600, 38000,
@@ -57,9 +56,6 @@ def class_xp_to_level(xp: float) -> tuple:
     next_xp = SKILL_XP_TABLE[level] if level < len(SKILL_XP_TABLE) else 200_000_000
     return level + remaining / next_xp, remaining
 
-def get_total_runs(catacombs: dict) -> int:
-    return sum(catacombs.get("tier_completions", {}).values())
-
 def get_daily_runs(catacombs: dict, master: bool = False) -> dict:
     now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5)))
     reset_time = now.replace(hour=4, minute=0, second=0, microsecond=0)
@@ -84,7 +80,7 @@ def build_keyboard(username: str, cute_name: str) -> InlineKeyboardMarkup:
         ]
     ])
 
-def build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, secrets, player_classes):
+def build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, player_classes, catacombs, master_catacombs):
     class_names = {
         "healer":  "🌸 Healer",
         "mage":    "🔵 Mage",
@@ -92,12 +88,17 @@ def build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, sec
         "archer":  "🟡 Archer",
         "tank":    "🟢 Tank",
     }
+
+    normal = {k: v for k, v in catacombs.get("tier_completions", {}).items() if k != "total"}
+    master = {k: v for k, v in master_catacombs.get("tier_completions", {}).items() if k != "total"}
+    total_runs = sum(normal.values()) + sum(master.values())
+
     lines = [f"⚔️ Катакомбы *{username}* `[{cute_name}]`:\n"]
     if cata_level >= 50:
         lines.append(f"🏰 Catacombs: *{cata_level:.2f}* _(до след: {int(200_000_000 - cata_progress):,} XP)_\n")
     else:
         lines.append(f"🏰 Catacombs: *{cata_level:.2f}* _(XP: {int(cata_xp):,})_\n")
-    lines.append(f"🔑 Секретки: *{int(secrets):,}*\n")
+    lines.append(f"🏃 Всего ранов: *{total_runs:,}*\n")
     lines.append("👤 Классы:")
     for key, label in class_names.items():
         xp = player_classes.get(key, {}).get("experience", 0)
@@ -110,16 +111,22 @@ def build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, sec
 
 def build_runs_text(username, cute_name, catacombs, master_catacombs):
     lines = [f"🏃 Раны *{username}* `[{cute_name}]`:\n"]
-    normal_total = get_total_runs(catacombs)
+
+    normal = {k: v for k, v in catacombs.get("tier_completions", {}).items() if k != "total"}
+    normal_total = sum(normal.values())
     lines.append(f"⚔️ Обычный режим: *{normal_total:,}* ранов")
-    for floor, count in sorted(catacombs.get("tier_completions", {}).items()):
+    for floor, count in sorted(normal.items()):
         floor_name = "Entrance" if floor == "0" else f"F{floor}"
         lines.append(f"  {floor_name}: *{count:,}*")
+
     lines.append("")
-    master_total = get_total_runs(master_catacombs)
+
+    master = {k: v for k, v in master_catacombs.get("tier_completions", {}).items() if k != "total"}
+    master_total = sum(master.values())
     lines.append(f"💀 Мастер мод: *{master_total:,}* ранов")
-    for floor, count in sorted(master_catacombs.get("tier_completions", {}).items()):
+    for floor, count in sorted(master.items()):
         lines.append(f"  M{floor}: *{count:,}*")
+
     return "\n".join(lines)
 
 def build_daily_text(username, cute_name, catacombs, master_catacombs):
@@ -203,9 +210,8 @@ async def dungeons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player_classes = dungeons.get("player_classes", {})
     cata_xp = catacombs.get("experience", 0)
     cata_level, cata_progress = cata_xp_to_level(cata_xp)
-    secrets = member.get("player_stats", {}).get("dungeons", {}).get("secrets_found", 0)
 
-    text = build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, secrets, player_classes)
+    text = build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, player_classes, catacombs, master_catacombs)
     keyboard = build_keyboard(username, cute_name)
     await msg.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
@@ -231,12 +237,11 @@ async def dungeons_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         player_classes = dungeons.get("player_classes", {})
         cata_xp = catacombs.get("experience", 0)
         cata_level, cata_progress = cata_xp_to_level(cata_xp)
-        secrets = member.get("player_stats", {}).get("dungeons", {}).get("secrets_found", 0)
 
         keyboard = build_keyboard(username, cute_name)
 
         if action == "dg_main":
-            text = build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, secrets, player_classes)
+            text = build_main_text(username, cute_name, cata_level, cata_progress, cata_xp, player_classes, catacombs, master_catacombs)
         elif action == "dg_runs":
             text = build_runs_text(username, cute_name, catacombs, master_catacombs)
         elif action == "dg_daily":
